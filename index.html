@@ -1,0 +1,152 @@
+<html>
+  <head>
+    <style>
+        video { width: 100%; }
+    </style>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-GLhlTQ8iRABdZLl6O3oVMWSktQOp6b7In1Zl3/Jr59b6EGGoI1aFkw7cmDA6j6gD" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js" integrity="sha384-w76AqPfDkMBDXo30jS1Sgez6pr3x5MlQ1ZAGC+nuZB+EYdgRZgiwxhTBTkF7CXvN" crossorigin="anonymous"></script>
+  </head>
+  <body>
+
+    <div class="container">
+      <div class="row" id="container">
+
+      </div>
+    </div>
+
+    <script src="/js/janus.js"></script>
+    <script>
+      const roomID = 1234;
+      const janusUrl = 'http://localhost:8088/janus';
+      const janusPlugin = 'janus.plugin.videoroom';
+      const containerName = "container";
+
+      var sessionUrl = null;
+      var handlerID = null;
+      var peers = {};
+
+      function getPluginHandler(pluginUrl) {
+        let tokens = pluginUrl.split('/');
+
+        if (pluginUrl.substr(-1) != '/')
+          return tokens[tokens.length-1];
+        else
+          return tokens[tokens.length-2];
+      }
+
+      function join_url(base, token) {
+        let url = ""
+        if (base.substr(-1) != '/')
+          url = base + '/';
+        else
+          url = base;
+
+        return url + String(token);
+      }
+
+      async function janusEventHandling(getPluginQueues) {
+
+        let pluginQueues = getPluginQueues();
+        for (const [pluginID, pluginQueue] of Object.entries(pluginQueues)) {
+
+          let pluginName = getPluginName(pluginID);
+
+          // Handle Video Room Plugin Events
+          if (pluginQueue.length) {
+            let event = pluginQueue.shift();
+
+            if ('videoroom' in event.plugindata.data && event.plugindata.data.videoroom == "joined") {
+              // Handle Leaving Event
+            } else if ('leaving' in event.plugindata.data) {
+              console.log(`${pluginID} - ${pluginName} - Free the resource in leaving event handler`);
+              let leavingID = String(event.plugindata.data.leaving);
+              if (leavingID in peers) {
+                peers[leavingID].component.remove();
+                peers[leavingID].pc.close();
+                delete peers[leavingID];
+              }
+            } else if ('publishers' in event.plugindata.data) {
+              console.log(`${pluginID} - ${pluginName} - New Publisher detected`);
+              let publishers = event.plugindata.data.publishers;
+              let container = document.getElementById(`${containerName}`);
+              for (let i = 0; i < publishers.length; i++) {
+                let pub = publishers[i];
+
+                // Create media component for the publisher
+                let component = createMediaComponent(pub.id, pub.display);
+                container.appendChild(component);
+
+                // Create plugin handler for each publisher
+                let pluginUrl = await attachJanusPlugin(sessionUrl, janusPlugin);
+
+                // Establish peer connection to the publisher
+                let pc = await createMediaPeer(pluginUrl, component, roomID, pub.id);
+
+                // Save the publisher information in targets object
+                peers[pub.id] = {
+                  display: pub.display,
+                  component: component,
+                  pluginID: pluginID,
+                  pc: pc
+                };
+              }
+            }
+          }
+        }
+
+      }
+
+      async function main() {
+
+        // Establish connection to Janus Gateway Video Room Pluin
+        sessionUrl = await createJanusSession(janusUrl);
+        let pluginUrl = await attachJanusPlugin(sessionUrl, janusPlugin);
+
+        // Start event subscriber to keep fetching plugin event data
+        startJanusEventSubscriber(sessionUrl);
+
+        // Start event handler to process event data stored in event queues
+        handlerID = setInterval(janusEventHandling, 500, getPluginQueues);
+
+        // Join the Video Room of ID 1234
+        const data = {
+          body: {
+            display: 'browser',
+            request: 'join',
+            ptype: 'publisher',
+            room: roomID
+          }
+        };
+        const response = await sendPluginMessage(pluginUrl, data);
+
+        // Show all the current joined attendee
+        const container = document.getElementById(`${containerName}`);
+        const publishers = response.plugindata.data.publishers;
+        for (let i = 0; i < publishers.length; i++) {
+          let pub = publishers[i];
+
+          // Create media component for the publisher
+          let component = createMediaComponent(pub.id, pub.display);
+          container.appendChild(component);
+
+          // Create plugin handler for each publisher
+          let pluginUrl = await attachJanusPlugin(sessionUrl, janusPlugin);
+          let pluginID = getPluginHandler(pluginUrl);
+
+          // Establish peer connection to the publisher
+          let pc = await createMediaPeer(pluginUrl, component, roomID, pub.id);
+
+          // Save the publisher information in targets object
+          peers[pub.id] = {
+            display: pub.display,
+            component: component,
+            pluginID: pluginID,
+            pc: pc
+          };
+        }
+      }
+
+      window.onload = main;
+    </script>
+  </body>
+</html>

@@ -10,23 +10,22 @@ from utils.janus import JanusSession
 
 
 async def publish(session, plugin, player):
-    pc = session.createPTCPeerConnection('publisher')
+    pc = session.createRTCPeerConnection('publisher')
     pc.addTrack(player.video)
 
     await pc.setLocalDescription(await pc.createOffer())
     request = {
         "request": "configure",
         "audio": False,
-        "video": True
+        "video": True,
     }
-
     response = await plugin.send(
         {
-            'body': request,
+            "body": request,
             "jsep": {
                 "sdp": pc.localDescription.sdp,
+                "trickle": False,
                 "type": pc.localDescription.type,
-                "trickle": False
             }
         }
     )
@@ -37,33 +36,38 @@ async def publish(session, plugin, player):
         )
     )
 
+
 async def main(session, player, room, name):
+    # Create session endpoint at janus side and keep polling the session state
     await session.create()
 
-    plugin = session.attach('janus.plugin.videoroom')
+    # Attach the videroom plugin to the session so that any event generated
+    # from the plugin can be polled in the session
+    plugin = await session.attach('janus.plugin.videoroom')
 
+    # Join the room with provided user name
     response = await plugin.send(
         {
-          'body': {
-            'display': name,
-            'ptype': 'publisher',
-            'request': 'join',
-            'room': room
-          }
+            'body': {
+                'display': name,
+                'ptype': 'publisher',
+                'request': 'join',
+                'room': room,
+            }
         }
     )
 
+    # Show active publishers (performing streaming)
     publishers = response['plugindata']['data']['publishers']
-    print('publishers in the room : ')
+    print("Active publishers in the room:")
     for pub in publishers:
-        print("- id : %(id)s, display : %(display)s" % pub)
+        print("- id: %(id)s, display: %(display)s" % pub)
 
+    # Start sending video to the
     await publish(session, plugin, player)
 
     while True:
         await asyncio.sleep(3)
-
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="janus publisher")

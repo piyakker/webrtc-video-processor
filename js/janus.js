@@ -8,8 +8,8 @@ function getPluginQueues() {
   return pluginQueues;
 }
 
-function getPluginQueues(pluginID) {
-  return pluginQueue[pluginID];
+function getPluginQueue(pluginID) {
+  return pluginQueues[pluginID];
 }
 
 function getPluginName(id) {
@@ -19,6 +19,7 @@ function getPluginName(id) {
 function createMediaComponent(id, name) {
   let div = document.createElement('div');
   div.setAttribute('id', id);
+  div.setAttribute('class', 'col-6');
 
   let h2 = document.createElement('h2');
   h2.setAttribute('id', `${id}_name`);
@@ -26,7 +27,7 @@ function createMediaComponent(id, name) {
 
   let audio = document.createElement('audio');
   audio.setAttribute('id', `${id}_audio`);
-  audio.setAttribute('autoplay', true);
+  audio.setAttribute('autoplay', 'true');
 
   let video = document.createElement('video');
   video.setAttribute('id', `${id}_video`);
@@ -56,15 +57,13 @@ function _janus_random_trans_id() {
     );
   }
 
-  // 要加join把它變回字串？
-  console.log(result)
   return result
 }
 
 function _janus_join_url(base, token) {
   let url = '';
   
-  if (base.subStrinig(-1) != '/') {
+  if (base.substr(-1) != '/') {
     url = base + '/';
   } else {
     url = base;
@@ -76,7 +75,7 @@ function _janus_join_url(base, token) {
 function _janus_join_url_params(base, params) {
   let url = '';
 
-  if (base.subStrinig(-1) != '/') {
+  if (base.substr(-1) != '/') {
     url = base + '/';
   } else {
     url = base;
@@ -84,7 +83,7 @@ function _janus_join_url_params(base, params) {
 
   let count = 0;
   for (const [key, value] of Object.entries(params)) {
-    if (count = 0) {
+    if (count == 0) {
       url += `?${key}=${value}`;
     } else {
       url += `&${key}=${value}`;
@@ -102,6 +101,7 @@ async function createJanusSession(janusUrl) {
     transaction: _janus_random_trans_id()
   };
 
+  
   // Create janus session handle
   let response = await fetch(janusUrl, {
     method: 'POST',
@@ -110,7 +110,7 @@ async function createJanusSession(janusUrl) {
   let data = await response.json();
 
   // Response check
-  if (data['jauns'] != 'success') {
+  if (data['janus'] != 'success') {
     throw new Error('Fail to create janus session');
   }
 
@@ -153,7 +153,7 @@ async function attachJanusPlugin(sessionUrl, pluginName) {
 
 async function sendPluginMessage(pluginUrl, data) {
   let msg = {
-    'janus': 'message',
+    janus: 'message',
     transaction: _janus_random_trans_id()
   };
 
@@ -166,52 +166,64 @@ async function sendPluginMessage(pluginUrl, data) {
     method: 'POST',
     body: JSON.stringify(msg)
   });
-  let data = await response.json();
+  data = await response.json();
 
   // Response check
-  if (data['jauns'] != 'ack') {
+  if (data['janus'] != 'ack') {
     throw new Error('Plugin does not ack your request');
   }
 
   // Wait for polled event data match with the requested transaction ID
   let elapsed = 0;
-  while (elapsed < 1000) {
+  while (elapsed < 10000) {
     let event = eventQueue.shift();
 
     if (
       event
-      && event.transaction
+      && 'transaction' in event
       && event.transaction == msg.transaction
     ) {
+      console.log(event)
       return event;
     }
 
     eventQueue.push(event);
     await _janus_msleep(100);
-    elapsed += 100
+    elapsed += 100;
   }
-  throw new Error("Fail to get responed event data within 1000 msec");
+  throw new Error("Fail to get responed event data within 500 msec");
 }
 
-async function startJanusEventSubscriber(sessionUrl) {
+function startJanusEventSubscriber(sessionUrl) {
   // Fetch one event for each request (maxev => max event)
   const params = { maxev: '1' };
-  const pollUrl = _janus_join_params(sessionUrl, params);
+  const pollUrl = _janus_join_url_params(sessionUrl, params);
 
-  // Send GET request
-  let response = await fetch(pollUrl, { method: 'GET' });
-  let data = await response.json();
+  async function longPoll() {
+    while (true) {
+      try {
+          // Send GET request
+        const response = await fetch(pollUrl, { method: 'GET' });
+        if (response.status === 200) {
+          const data = await response.json();
+          // Response check
+          if (data['janus'] == 'event') {
+            // Push the event data into the plugin-specific event queue
+            if (data['sender'] in pluginQueues) {
+              queue = pluginQueues[String(data['sender'])];
+              queue.push(data);
 
-  // Response check
-  if (data['janus'] == 'event') {
-    // Push the event data into the plugin-specific event queue
-    if (data['sender'] in pluginQueues) {
-      queue = pluginQueues[String(data['sender'])];
-      queue.pudh(data);
-
-      eventQueue.push(data)
+              eventQueue.push(data);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error while polling:', error);
+      }
     }
   }
+
+  longPoll();
 }
 
 async function createMediaPeer(pluginUrl, media, roomID, publisherID) {
@@ -248,7 +260,6 @@ async function createMediaPeer(pluginUrl, media, roomID, publisherID) {
     }
   };
   let response = await sendPluginMessage(pluginUrl, data);
-  console.log(response);
   let desc = new RTCSessionDescription(response['jsep'])
   await pc.setRemoteDescription(desc);
 
@@ -256,6 +267,7 @@ async function createMediaPeer(pluginUrl, media, roomID, publisherID) {
   await pc.setLocalDescription(await pc.createAnswer());
 
   data = {
+    body: { request: 'start' },
     jsep: {
       sdp: pc.localDescription.sdp,
       type: pc.localDescription.type,

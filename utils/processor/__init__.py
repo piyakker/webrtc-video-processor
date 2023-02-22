@@ -1,8 +1,9 @@
 from .facedet import FaceDetStreamTrack
-
+from .handpose import HandPoseStreamTrack
 
 _processors = {
     'facedet': FaceDetStreamTrack,
+    'handpose': HandPoseStreamTrack,
 }
 
 def get_processer_names():

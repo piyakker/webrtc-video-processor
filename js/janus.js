@@ -183,7 +183,6 @@ async function sendPluginMessage(pluginUrl, data) {
       && 'transaction' in event
       && event.transaction == msg.transaction
     ) {
-      console.log(event)
       return event;
     }
 
